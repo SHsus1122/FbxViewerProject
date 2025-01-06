@@ -1,4 +1,4 @@
-#include "include/GL/glew.h"
+#include "include/GLEW/glew.h"
 #include "include/GLFW/glfw3.h"
 #include <iostream>
 
@@ -30,7 +30,7 @@ int main()
 	// 초기화 체크
 	if (!glfwInit()) {
 		std::cerr << "GLFW 초기화 실패" << '\n';
-		exit(-1);
+		exit(EXIT_FAILURE);
 	}
 
 	// Window를 만들기 전에 필요한 설정 진행
@@ -70,6 +70,13 @@ int main()
 	// GLFW에서 디폴트 스왑 간격은 0입니다. 즉, 백버퍼가 준비되면 프론트 버퍼가 화면에 출력이 완료되지 않았더라도 스와핑이 이루어집니다.
 	// 1로 설정하면 모니터의 헤르츠 설정에 따라 맞춰집니다. (60hz면 60fps로 렌더링 즉, 1초에 60프레임으로 화면에 출력)
 	glfwSwapInterval(1);
+
+	// ViewPort 설정
+	// 창(도화지)위의 어느 부분에 그림을 그릴지 결정
+	int framebuf_width, framebuf_height;
+	glfwGetFramebufferSize(window, &framebuf_width, &framebuf_height);
+	// 뷰포트 좌하단 픽셀(x, y)값과 뷰포트의 가로, 세로 크기가 될 영역(여기서는 창을 처음부터 끝까지 다 채우는 기준)
+	glViewport(0, 0, framebuf_width, framebuf_height);
 	// ====================================== [ GLFW 설정 마무리 ]
 
 
@@ -82,6 +89,57 @@ int main()
 		glfwTerminate();
 		exit(-1);
 	}
+
+
+	// 삼각형 그리기 꼭짓점 생성
+	float vertices[] = {
+		-0.5f, -0.5f, 0.0f,
+		 0.5f, -0.5f, 0.0f,
+		 0.0f,  0.5f, 0.0f
+	};
+
+	// VBO(Vertex Buffer Object)생성 및 GLuint 자료형의 고유 ID 지정하면서 VBO 생성
+	GLuint VAO;
+	GLuint VBO;
+
+	glGenVertexArrays(1, &VAO); // VAO 생성
+	glBindVertexArray(VAO); // VAO를 OpenGL context에 연결(bind)
+
+	glGenBuffers(1, &VBO);
+
+	// VBO를 GL_ARRAY_BUFFER타겟에 바인딩(연결)
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+
+	// VBO에 담길 데이터와 크기 지정
+	// glBufferData는 현재 연결된 버퍼 오브젝트에 데이터를 복사해 담을 수 있게 합니다.
+	// 복사하고자 하는 타겟, 복사할 데티어 크기, 복사할 데이터 자체, 그래픽 카드가 복사된 데이터를 어떻게 활용할지에 대한 힌트
+	glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
+
+	// OpenGL Context 에 연결된 VBO에 복사, 저장 완료 이후 GPU가 어떤 순서로 어떻게 저장되었는지 알려주기 위한 작업
+	// 지금 전달한 꼭짓점 정보의 경우에는 9개의 원소를 지닌 단순한 배열입니다.
+	// ---------
+	// 꼭짓점의 색, 텍스쳐를 입힐 때 사용할 좌표, 노멀(법선) 등 이러한 정보들을 각각 Vertex Attribute라고 합니다.
+	// 이에 대한 정보를 GPU가 어떻게 해석할지 정보를 전달하는 함수가 glVertexAttribPointer 입니다.
+	// ---------
+	// 첫 번째 인자는 VA의 번호입니다. 이를 추후 셰이더에서 VA의 Location이라고도 합니다. 여기서는 0과 1번째의 VA만 구성합니다.
+	// 두 번째 인자는 VA의 크기를 받습니다. 이는 요소의 갯수로 좌표는 x, y, z 총 3개 u, v 두 개가 그 크기에 해당합니다.
+	// 세 번째 인자는 데이터의 자료형입니다. 모두 GL_FLOAT 형의 데이터 타입 입니다.
+	// 네 번째 인자는 데이터를 정규화(Normalize)할 것인지에 대한 여부입니다.
+	// 다섯 번째 인자는 stride입니다. 같은 VA번호의 다음 요소까지의 거리 또는 크기를 바이트로 나타낸 값입니다.
+	//	- x와 y사이 거리 또는 uv와 다음 uv사이의 거리로 uv도 GL_FLOAT형의 자료 5개를 넘어가야 다음 좌표 또는 uv에 도달하니 아래처럼 합니다.
+	//	- 참고로, 모든 값들이 빈 공간 없이 붙어있을 때에는 0으로 전달해도 OpenGL이 알아서 stride를 계산해줍니다.
+	// 여섯 번째 인자는 void 포인터형이어야 하며, 해당 VA의 값이 버퍼에서 얼만큼의 offset후에 시작되는지를 바이트값으로 받습니다.
+	//	- 즉, 좌표는 버퍼의 첫 시작부터 그 값이 시작되니 0, uv는 3개의 GL_FLOAT를 건너뛰고 시작되니 아래처럼 작성합니다.
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(GL_FLOAT), (void*)0);
+	glEnableVertexAttribArray(0);
+
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindVertexArray(0);
+
+	//glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(GL_FLOAT), (void*)(3 * sizeof(GL_FLOAT)));
+	//glEnableVertexAttribArray(1);
+
+
 
 	// glGetString : OpenGL의 버전, 확장들의 목록을 알아낼 때 사용합니다.(여기서는 버전 정보)
 	std::cout << glGetString(GL_VERSION) << '\n';
@@ -102,6 +160,10 @@ int main()
 	while (!glfwWindowShouldClose(window)) {
 
 		glClear(GL_COLOR_BUFFER_BIT);	// 화면 색상 버퍼를 설정한 색상으로 초기화 합니다.(즉, 이전 프레임의 잔상이 남지 않도록 화면을 지웁니다)
+
+		//glUseProgram(ShaderProgramThatWeWillMakeLater);
+		glBindVertexArray(VAO);	// 한 줄로 끝!
+		glDrawArrays(GL_TRIANGLES, 0, 3); // 아직 모르셔도 됩니다
 
 		glfwSwapBuffers(window);		// 더블 버퍼링을 사용해 렌더링된 내용을 화면에 표시합니다.
 
