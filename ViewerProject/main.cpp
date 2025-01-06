@@ -18,6 +18,7 @@ void show_glfw_error(int error, const char* description);
 
 int main()
 {
+	// 초기화 중과 초기화 후의 오류 체크용
 	glfwSetErrorCallback(show_glfw_error);
 
 
@@ -47,7 +48,7 @@ int main()
 		glfwTerminate();
 		exit(-1);
 	}
-
+		
 
 	glfwMakeContextCurrent(window);
 
@@ -117,3 +118,53 @@ void key_pressed(GLFWwindow* window, int key, int scancode, int action, int mods
 		exit(0);
 	}
 }
+
+
+/* FBX SDK 기본 테스트 코드
+#include <fbxsdk.h>
+#include <iostream>
+
+int main(int argc, char** argv) {
+	// 1. FBX SDK 매니저 생성
+	FbxManager* lSdkManager = FbxManager::Create();
+	if (!lSdkManager) {
+		std::cerr << "Error: Unable to create FBX SDK manager!" << std::endl;
+		return -1;
+	}
+
+	// 2. IOSettings 객체 생성
+	FbxIOSettings* ios = FbxIOSettings::Create(lSdkManager, IOSROOT);
+	lSdkManager->SetIOSettings(ios);
+
+	// 3. Importer 객체 생성
+	FbxImporter* lImporter = FbxImporter::Create(lSdkManager, "");
+
+	// 4. FBX 파일 로드
+	if (!lImporter->Initialize("../SampleResource/woodenboxfab/source/Wooden_Box_FAB.fbx", -1, lSdkManager->GetIOSettings())) {
+		std::cerr << "Error: Unable to initialize FBX importer!" << std::endl;
+		std::cerr << "Error returned: " << lImporter->GetStatus().GetErrorString() << std::endl;
+		return -1;
+	}
+
+	// 5. Scene 객체 생성
+	FbxScene* lScene = FbxScene::Create(lSdkManager, "Scene");
+
+	// 6. Importer로 Scene 데이터 로드
+	lImporter->Import(lScene);
+
+	// 7. 씬의 루트 노드 탐색
+	FbxNode* lRootNode = lScene->GetRootNode();
+	if (lRootNode) {
+		for (int i = 0; i < lRootNode->GetChildCount(); i++) {
+			FbxNode* lChildNode = lRootNode->GetChild(i);
+			std::cout << "Node Name: " << lChildNode->GetName() << std::endl;
+		}
+	}
+
+	// 8. FBX 리소스 해제
+	lImporter->Destroy();
+	lSdkManager->Destroy();
+
+	return 0;
+}
+*/
