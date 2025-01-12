@@ -1,27 +1,72 @@
 #include "include/GLEW/glew.h"
 #include "include/GLFW/glfw3.h"
+#include "include/GLM/glm/glm.hpp"
+#include "include/GLM/glm/gtc/matrix_transform.hpp"
+#include "include/GLM/glm/gtc/type_ptr.hpp"
 #include <iostream>
 #include <stdlib.h>
 #include <stdio.h>
 #include <fstream>
 #include <string>
 #include <fbxsdk.h>
+#include <vector>
 
 #pragma comment(lib, "OpenGL32.lib")
 #pragma comment(lib, "lib/glew32.lib")
 #pragma comment(lib, "lib/glfw3.lib")
 
-#pragma region 추가 지식들
-// OpenGL Context : OpenGL 상태와 객체들을 관리하는 공간, 각 창(window)은 자신만의 OpenGL Context를 가질 수 있습니다.
 
-#pragma endregion
+#pragma region Structs & Global Variables
+
+// [ Vertex 구조체 ]
+struct Vertex {
+	float position[3];
+	float normal[3];
+	float uv[2];
+};
+
+// [ Camera 구조체 ]
+struct Camera {
+	glm::vec3 position, front, up, right, worldUp;
+	float yaw, pitch, roll, speed, sensitivity;
+
+	Camera(glm::vec3 startPosition, glm::vec3 startUp, float startYaw, float startPitch)
+		: position(startPosition), worldUp(startUp), yaw(startYaw), pitch(startPitch), roll(0.0f),
+		speed(10.0f), sensitivity(0.1f) {
+		updateVectors();
+	}
+
+	void updateVectors() {
+		front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+		front.y = sin(glm::radians(pitch));
+		front.z = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+		front = glm::normalize(front);
+
+		right = glm::normalize(glm::cross(front, worldUp));
+		up = glm::normalize(glm::cross(right, front));
+	}
+};
 
 // VBO(Vertex Buffer Object)생성 및 GLuint 자료형의 고유 ID 지정하면서 VBO 생성
 GLuint VAO;		// Vertex Array Object
 GLuint VBO;		// Vertex Buffer Object
+GLuint EBO;		// Element Buffer Object
 GLuint shader;
 
-#pragma region Functions(함수)
+std::vector<Vertex> vertices;
+std::vector<unsigned int> indices;
+Camera camera(glm::vec3(0.0f, 0.0f, 5.0f), glm::vec3(0.0f, 1.0f, 0.0f), -90.0f, 0.0f);
+
+// 이전 마우스 위치 저장용
+double lastX = 400, lastY = 300;
+bool firstMouse = true;
+
+// 마우스 버튼 콜백 (클릭 상태 감지)
+bool isRightMousePressed = false;
+
+#pragma endregion
+
+#pragma region Utility Functions
 
 // [ 파일 읽기용 함수 ] - 쉐이더 파일을 읽어와 문자열로 반환
 std::string	ReadFile(const char* filePath)
@@ -112,6 +157,167 @@ void CreateShaderProgramFromFiles(const char* vsPath, const char* fsPath)
 	CompileShader(vsCode, fsCode);
 }
 
+#pragma endregion
+
+#pragma region Input & Callbacks
+
+// [ 키 입력 ]
+void KeyPressed(GLFWwindow* window, int key, int scancode, int action, int mods) {
+	float deltaTime = 0.016f; // 60FPS 가정
+	float velocity = camera.speed * deltaTime;
+
+	if (action == GLFW_PRESS || action == GLFW_REPEAT) {
+		if (key == GLFW_KEY_W) camera.position += camera.front * velocity;
+		if (key == GLFW_KEY_S) camera.position -= camera.front * velocity;
+		if (key == GLFW_KEY_A) camera.position -= camera.right * velocity;
+		if (key == GLFW_KEY_D) camera.position += camera.right * velocity;
+		if (key == GLFW_KEY_Q) camera.position -= camera.up * velocity;
+		if (key == GLFW_KEY_E) camera.position += camera.up * velocity;
+	}
+}
+
+// [ 마우스 이동 ]
+void MouseMoved(GLFWwindow* window, double xpos, double ypos) {
+	if (!isRightMousePressed) {
+		// 우클릭 해제 상태에서는 현재 마우스 위치를 초기값으로 저장만 함
+		lastX = xpos;
+		lastY = ypos;
+		return;
+	}
+
+	float xOffset = xpos - lastX;
+	float yOffset = lastY - ypos; // Y 좌표는 위쪽이 양수
+	lastX = xpos;
+	lastY = ypos;
+
+	xOffset *= camera.sensitivity;
+	yOffset *= camera.sensitivity;
+
+	camera.yaw += xOffset;
+	camera.pitch += yOffset;
+
+	if (camera.pitch > 89.0f) camera.pitch = 89.0f;
+	if (camera.pitch < -89.0f) camera.pitch = -89.0f;
+
+	camera.updateVectors();
+}
+
+// [ 마우스 입력 ]
+void MouseButtonPressed(GLFWwindow* window, int button, int action, int mods) {
+	if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+		if (action == GLFW_PRESS) {
+			std::cout << "pressed" << std::endl;
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+			isRightMousePressed = true;
+			//firstMouse = false;
+		}
+		else if (action == GLFW_RELEASE) {
+			std::cout << "released" << std::endl;
+			glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+			isRightMousePressed = false;
+		}
+	}
+}
+
+#pragma endregion
+
+#pragma region FBX Functions
+
+// [ FBX 준비 ]
+void ReadyFbx() {
+	// 1. FBX SDK 매니저 생성
+	FbxManager* lSdkManager = FbxManager::Create();
+	if (!lSdkManager) {
+		std::cerr << "Error: Unable to create FBX SDK manager!" << std::endl;
+		return;
+	}
+
+	// 2. IOSettings 객체 생성
+	FbxIOSettings* ios = FbxIOSettings::Create(lSdkManager, IOSROOT);
+	lSdkManager->SetIOSettings(ios);
+
+	// 3. Importer 객체 생성
+	FbxImporter* lImporter = FbxImporter::Create(lSdkManager, "");
+
+	// 4. FBX 파일 로드
+	if (!lImporter->Initialize("../SampleResource/woodenboxfab/source/Wooden_Box_FAB.fbx", -1, lSdkManager->GetIOSettings())) {
+		std::cerr << "Error: Unable to initialize FBX importer!" << std::endl;
+		std::cerr << "Error returned: " << lImporter->GetStatus().GetErrorString() << std::endl;
+		return;
+	}
+
+	// 5. Scene 객체 생성
+	FbxScene* lScene = FbxScene::Create(lSdkManager, "Scene");
+
+	// 6. Importer로 Scene 데이터 로드
+	lImporter->Import(lScene);
+
+	// 7. 씬의 루트 노드 탐색
+	FbxNode* lRootNode = lScene->GetRootNode();
+	if (lRootNode) {
+		for (int i = 0; i < lRootNode->GetChildCount(); i++) {
+			FbxNode* lChildNode = lRootNode->GetChild(i);
+			FbxMesh* lMesh = lChildNode->GetMesh();
+			int polygonCount = lMesh->GetPolygonCount();
+			FbxVector4* controlPoints = lMesh->GetControlPoints();
+
+			std::cout << "Node Name: " << lChildNode->GetName() << std::endl;
+			std::cout << "ControlPoints Count: " << controlPoints->Length() << std::endl;
+			std::cout << "Polygon Count: " << polygonCount << std::endl;
+
+			float scaleFactor = 0.01f;
+
+			for (size_t j = 0; j < polygonCount; j++) {
+				for (int k = 0; k < 3; k++) {
+					int controlPointIndex = lMesh->GetPolygonVertex(j, k);
+					FbxVector4 pos = lMesh->GetControlPointAt(controlPointIndex);
+
+					//std::cout << "Vertex Position: " << pos[0] << ", " << pos[1] << ", " << pos[2] << std::endl;
+
+					Vertex vertx;
+					vertx.position[0] = pos[0] * scaleFactor;
+					vertx.position[1] = pos[1] * scaleFactor;
+					vertx.position[2] = pos[2] * scaleFactor;
+
+					vertices.push_back(vertx);
+
+					indices.push_back(vertices.size() - 1);
+				}
+			}
+			std::cout << "Vertex Count For OpenGL: " << vertices.size() << std::endl;
+		}
+	}
+
+	// 8. FBX 리소스 해제
+	lImporter->Destroy();
+	lSdkManager->Destroy();
+}
+
+// [ 버텍스 변환 ]
+GLfloat* ConvertVertex() {
+	// vertices: FBX 데이터를 담고 있는 std::vector<Vertex>
+	std::vector<GLfloat> vertexData;
+
+	// FBX 데이터를 GLfloat로 변환하여 std::vector에 추가
+	for (const auto& vertex : vertices) {
+		vertexData.push_back(static_cast<GLfloat>(vertex.position[0])); // x
+		vertexData.push_back(static_cast<GLfloat>(vertex.position[1])); // y
+		vertexData.push_back(static_cast<GLfloat>(vertex.position[2])); // z
+	}
+
+	// 동적 배열 생성
+	GLfloat* result = new GLfloat[vertexData.size()];
+
+	// std::vector 데이터를 동적 배열로 복사
+	std::copy(vertexData.begin(), vertexData.end(), result);
+
+	return result;	// 동적 메모리의 포인터를 반환
+}
+
+#pragma endregion
+
+#pragma region GLFW Functions
+
 // [ 에러 체킹 ]
 void ShowGlfwError(int error, const char* description) {
 	std::cerr << "Error: " << description << '\n';
@@ -125,14 +331,6 @@ void WindowResized(GLFWwindow* window, int width, int height) {
 	//glClear(GL_COLOR_BUFFER_BIT);
 	//glfwSwapBuffers(window);
 	glViewport(0, 0, width, height);
-}
-
-// [ 키 입력 ]
-void KeyPressed(GLFWwindow* window, int key, int scancode, int action, int mods) {
-	if (key == 'Q' && action == GLFW_PRESS) {
-		glfwTerminate();
-		exit(0);
-	}
 }
 
 // [ GLFW 초기화 및 결과 반환 ]
@@ -165,9 +363,13 @@ GLFWwindow* GlfwInitialize() {
 
 	// 지정한 GLFW 창(window) OpegGL Context를 현재 활성 컨텍스트(Current Context)로 만듭니다.
 	glfwMakeContextCurrent(window);
+	glfwSetCursorPosCallback(window, MouseMoved);
+	glfwSetMouseButtonCallback(window, MouseButtonPressed);
+	glfwSetKeyCallback(window, KeyPressed);
+	//glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);	// 마우스 커서 숨김
 
 	glfwSetWindowSizeCallback(window, WindowResized);	// 창의 크기가 변경될 때마다 호출되는 콜백 함수입니다.
-	glfwSetKeyCallback(window, KeyPressed);			// 창에서 키입력이 있을 때마다 호출되는 콜백 함수입니다.
+	glfwSetKeyCallback(window, KeyPressed);				// 창에서 키입력이 있을 때마다 호출되는 콜백 함수입니다.
 
 	// VSync 활성화
 	// 스왑 간격(VSync)은 버퍼 스와핑이 일어나기 전까지 기다려야하는 프레임 수(디스플레이의 수직 동기화 타이밍)을 의미합니다.
@@ -180,7 +382,31 @@ GLFWwindow* GlfwInitialize() {
 
 // [ 렌더링 함수 ]
 void Render() {
+	GLfloat* vertexData = ConvertVertex();
 
+	// VAO 생성 및 바인딩
+	glGenVertexArrays(1, &VAO);
+	glBindVertexArray(VAO);
+
+	// VBO 생성 및 바인딩
+	glGenBuffers(1, &VBO);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBufferData(GL_ARRAY_BUFFER, vertices.size() * sizeof(Vertex), &vertices[0], GL_STATIC_DRAW);
+
+	// EBO 생성 및 바인딩
+	glGenBuffers(1, &EBO);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices.size() * sizeof(unsigned int), &indices[0], GL_STATIC_DRAW);
+
+	// Vertex Attribute 설정 (위치 정보만 사용)
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+	glEnableVertexAttribArray(0);
+
+	// 바인딩 해제
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindVertexArray(0);
+
+	delete[] vertexData; // 동적 메모리 해제
 }
 
 // [ 테스트용 삼각형 그리기 함수 ]
@@ -231,7 +457,6 @@ void CreateTriangle()
 
 #pragma endregion
 
-
 int main()
 {
 	glfwSetErrorCallback(ShowGlfwError);	// 초기화 중과 초기화 후의 오류 체크용
@@ -259,8 +484,10 @@ int main()
 		exit(-1);
 	}
 
-	//Render();
-	CreateTriangle();
+	ReadyFbx();
+	Render();
+
+	//CreateTriangle();
 	CreateShaderProgramFromFiles("shader.vert", "shader.frag");
 
 	std::cout << glGetString(GL_VERSION) << '\n';		// glGetString : OpenGL의 버전, 확장들의 목록을 알아낼 때 사용합니다.(여기서는 버전 정보)
@@ -271,18 +498,38 @@ int main()
 		std::cout << glGetStringi(GL_EXTENSIONS, i) << '\n';
 	}
 
-
 	// 렌더링 루프의 구성 요소들입니다.
 	while (!glfwWindowShouldClose(window)) {
 		glClearColor(1, 1, 1, 1);		// 기본 배경색 설정(흰색)
 		glClear(GL_COLOR_BUFFER_BIT);	// 화면 색상 버퍼를 설정한 색상으로 초기화 합니다.(즉, 이전 프레임의 잔상이 남지 않도록 화면을 지웁니다)
 
+		glm::mat4 view = glm::lookAt(
+			camera.position,
+			camera.position + camera.front,
+			camera.up
+		);
+
+		glm::mat4 projection = glm::perspective(
+			glm::radians(45.0f),
+			800.0f / 600.0f,
+			0.1f,
+			1000.0f
+		);
+
+		glm::mat4 model = glm::mat4(1.0f);
+		glm::mat4 mvp = projection * view * model;
+
 		glUseProgram(shader);			// 쉐이더 프로그램 활성화
 
-		glBindVertexArray(VAO);				// VAO 활성화
-		glDrawArrays(GL_TRIANGLES, 0, 3);	// 삼각형 그리기
-		glBindVertexArray(0);				// VAO 비활성화
+		// MVP 행렬을 쉐이더로 전달
+		GLuint mvpLoc = glGetUniformLocation(shader, "uMVP");
+		glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, glm::value_ptr(mvp));
+		glBindVertexArray(VAO);			// VAO 활성화
 
+		glDrawArrays(GL_TRIANGLES, 0, vertices.size());	// 삼각형 그리기
+		//glDrawElements(GL_TRIANGLES, indices.size(), GL_UNSIGNED_INT, 0); // 인덱스를 기반으로 렌더링
+
+		glBindVertexArray(0);			// VAO 비활성화
 		glUseProgram(0);				// 쉐이더 프로그램 비활성화
 
 		glfwSwapBuffers(window);		// 더블 버퍼링을 사용해 렌더링된 내용을 화면에 표시합니다.
@@ -294,53 +541,3 @@ int main()
 
 	return 0;
 }
-
-
-/* FBX SDK 기본 테스트 코드
-#include <fbxsdk.h>
-#include <iostream>
-
-int main(int argc, char** argv) {
-	// 1. FBX SDK 매니저 생성
-	FbxManager* lSdkManager = FbxManager::Create();
-	if (!lSdkManager) {
-		std::cerr << "Error: Unable to create FBX SDK manager!" << std::endl;
-		return -1;
-	}
-
-	// 2. IOSettings 객체 생성
-	FbxIOSettings* ios = FbxIOSettings::Create(lSdkManager, IOSROOT);
-	lSdkManager->SetIOSettings(ios);
-
-	// 3. Importer 객체 생성
-	FbxImporter* lImporter = FbxImporter::Create(lSdkManager, "");
-
-	// 4. FBX 파일 로드
-	if (!lImporter->Initialize("../SampleResource/woodenboxfab/source/Wooden_Box_FAB.fbx", -1, lSdkManager->GetIOSettings())) {
-		std::cerr << "Error: Unable to initialize FBX importer!" << std::endl;
-		std::cerr << "Error returned: " << lImporter->GetStatus().GetErrorString() << std::endl;
-		return -1;
-	}
-
-	// 5. Scene 객체 생성
-	FbxScene* lScene = FbxScene::Create(lSdkManager, "Scene");
-
-	// 6. Importer로 Scene 데이터 로드
-	lImporter->Import(lScene);
-
-	// 7. 씬의 루트 노드 탐색
-	FbxNode* lRootNode = lScene->GetRootNode();
-	if (lRootNode) {
-		for (int i = 0; i < lRootNode->GetChildCount(); i++) {
-			FbxNode* lChildNode = lRootNode->GetChild(i);
-			std::cout << "Node Name: " << lChildNode->GetName() << std::endl;
-		}
-	}
-
-	// 8. FBX 리소스 해제
-	lImporter->Destroy();
-	lSdkManager->Destroy();
-
-	return 0;
-}
-*/
