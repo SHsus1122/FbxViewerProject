@@ -15,7 +15,6 @@
 #pragma comment(lib, "lib/glew32.lib")
 #pragma comment(lib, "lib/glfw3.lib")
 
-
 #pragma region Structs & Global Variables
 
 // [ Vertex 구조체 ]
@@ -63,6 +62,13 @@ bool firstMouse = true;
 
 // 마우스 버튼 콜백 (클릭 상태 감지)
 bool isRightMousePressed = false;
+
+float deltaTime = 0.0f;	// 이전 프레임과 현재 프레임 간의 시간 차이
+float lastFrame = 0.0f;	// 이전 프레임의 시간
+
+// 마우스 오프셋 저장 변수
+float mouseXOffset = 0.0f;
+float mouseYOffset = 0.0f;
 
 #pragma endregion
 
@@ -162,8 +168,8 @@ void CreateShaderProgramFromFiles(const char* vsPath, const char* fsPath)
 #pragma region Input & Callbacks
 
 // [ 키 입력 ]
+/*
 void KeyPressed(GLFWwindow* window, int key, int scancode, int action, int mods) {
-	float deltaTime = 0.016f; // 60FPS 가정
 	float velocity = camera.speed * deltaTime;
 
 	if (action == GLFW_PRESS || action == GLFW_REPEAT) {
@@ -173,6 +179,46 @@ void KeyPressed(GLFWwindow* window, int key, int scancode, int action, int mods)
 		if (key == GLFW_KEY_D) camera.position += camera.right * velocity;
 		if (key == GLFW_KEY_Q) camera.position -= camera.up * velocity;
 		if (key == GLFW_KEY_E) camera.position += camera.up * velocity;
+	}
+}
+*/
+
+// [ 카메라 업데이트 ]
+void UpdateCamera(GLFWwindow* window, float deltaTime) {
+	float velocity = camera.speed * deltaTime;
+
+	// 키 입력에 따른 카메라 이동
+	if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS)
+		camera.position += camera.front * velocity;
+	if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS)
+		camera.position -= camera.front * velocity;
+	if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS)
+		camera.position -= camera.right * velocity;
+	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
+		camera.position += camera.right * velocity;
+	if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS)
+		camera.position -= camera.up * velocity;
+	if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)
+		camera.position += camera.up * velocity;
+
+	// 마우스 이동에 따른 카메라 회전
+	if (isRightMousePressed) {
+		double currentX, currentY;
+		glfwGetCursorPos(window, &currentX, &currentY);
+
+		float xOffset = (currentX - lastX) * camera.sensitivity;
+		float yOffset = (lastY - currentY) * camera.sensitivity; // Y는 반전
+		lastX = currentX;
+		lastY = currentY;
+
+		camera.yaw += xOffset;
+		camera.pitch += yOffset;
+
+		// 피치 제한
+		if (camera.pitch > 89.0f) camera.pitch = 89.0f;
+		if (camera.pitch < -89.0f) camera.pitch = -89.0f;
+
+		camera.updateVectors();
 	}
 }
 
@@ -185,21 +231,11 @@ void MouseMoved(GLFWwindow* window, double xpos, double ypos) {
 		return;
 	}
 
-	float xOffset = xpos - lastX;
-	float yOffset = lastY - ypos; // Y 좌표는 위쪽이 양수
+	// 마우스 오프셋 저장
+	mouseXOffset += (xpos - lastX) * camera.sensitivity;
+	mouseYOffset += (lastY - ypos) * camera.sensitivity; // Y 좌표는 위쪽이 양수
 	lastX = xpos;
 	lastY = ypos;
-
-	xOffset *= camera.sensitivity;
-	yOffset *= camera.sensitivity;
-
-	camera.yaw += xOffset;
-	camera.pitch += yOffset;
-
-	if (camera.pitch > 89.0f) camera.pitch = 89.0f;
-	if (camera.pitch < -89.0f) camera.pitch = -89.0f;
-
-	camera.updateVectors();
 }
 
 // [ 마우스 입력 ]
@@ -240,7 +276,14 @@ void ReadyFbx() {
 	FbxImporter* lImporter = FbxImporter::Create(lSdkManager, "");
 
 	// 4. FBX 파일 로드
-	if (!lImporter->Initialize("../SampleResource/woodenboxfab/source/Wooden_Box_FAB.fbx", -1, lSdkManager->GetIOSettings())) {
+	//if (!lImporter->Initialize("../SampleResource/woodenboxfab/source/Wooden_Box_FAB.fbx", -1, lSdkManager->GetIOSettings())) {
+	//	std::cerr << "Error: Unable to initialize FBX importer!" << std::endl;
+	//	std::cerr << "Error returned: " << lImporter->GetStatus().GetErrorString() << std::endl;
+	//	return;
+	//}
+
+	// 4. FBX 파일 로드
+	if (!lImporter->Initialize("../SampleResource/xbot/source/X Bot.fbx", -1, lSdkManager->GetIOSettings())) {
 		std::cerr << "Error: Unable to initialize FBX importer!" << std::endl;
 		std::cerr << "Error returned: " << lImporter->GetStatus().GetErrorString() << std::endl;
 		return;
@@ -254,10 +297,15 @@ void ReadyFbx() {
 
 	// 7. 씬의 루트 노드 탐색
 	FbxNode* lRootNode = lScene->GetRootNode();
+
 	if (lRootNode) {
+		std::cout << "rootNode child count: " << lRootNode->GetChildCount() << std::endl;
 		for (int i = 0; i < lRootNode->GetChildCount(); i++) {
 			FbxNode* lChildNode = lRootNode->GetChild(i);
 			FbxMesh* lMesh = lChildNode->GetMesh();
+
+			if (lChildNode == NULL || lMesh == NULL) continue;
+			
 			int polygonCount = lMesh->GetPolygonCount();
 			FbxVector4* controlPoints = lMesh->GetControlPoints();
 
@@ -365,11 +413,10 @@ GLFWwindow* GlfwInitialize() {
 	glfwMakeContextCurrent(window);
 	glfwSetCursorPosCallback(window, MouseMoved);
 	glfwSetMouseButtonCallback(window, MouseButtonPressed);
-	glfwSetKeyCallback(window, KeyPressed);
+	//glfwSetKeyCallback(window, KeyPressed);
 	//glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);	// 마우스 커서 숨김
 
 	glfwSetWindowSizeCallback(window, WindowResized);	// 창의 크기가 변경될 때마다 호출되는 콜백 함수입니다.
-	glfwSetKeyCallback(window, KeyPressed);				// 창에서 키입력이 있을 때마다 호출되는 콜백 함수입니다.
 
 	// VSync 활성화
 	// 스왑 간격(VSync)은 버퍼 스와핑이 일어나기 전까지 기다려야하는 프레임 수(디스플레이의 수직 동기화 타이밍)을 의미합니다.
@@ -500,6 +547,27 @@ int main()
 
 	// 렌더링 루프의 구성 요소들입니다.
 	while (!glfwWindowShouldClose(window)) {
+		float currentFrame = glfwGetTime();		// 현재 프레임의 시간 (초 단위)
+		deltaTime = currentFrame - lastFrame;	// 프레임 간 시간 차이
+		lastFrame = currentFrame;
+
+		// 마우스 입력으로 카메라 회전 업데이트
+		if (isRightMousePressed) {
+			camera.yaw += mouseXOffset;
+			camera.pitch += mouseYOffset;
+
+			// 피치 제한
+			if (camera.pitch > 89.0f) camera.pitch = 89.0f;
+			if (camera.pitch < -89.0f) camera.pitch = -89.0f;
+
+			camera.updateVectors();
+			mouseXOffset = 0.0f; // 오프셋 초기화
+			mouseYOffset = 0.0f;
+		}
+
+		// 입력 처리 (보간 기반)
+		UpdateCamera(window, deltaTime);
+
 		glClearColor(1, 1, 1, 1);		// 기본 배경색 설정(흰색)
 		glClear(GL_COLOR_BUFFER_BIT);	// 화면 색상 버퍼를 설정한 색상으로 초기화 합니다.(즉, 이전 프레임의 잔상이 남지 않도록 화면을 지웁니다)
 
